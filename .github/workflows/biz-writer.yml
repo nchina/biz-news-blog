@@ -101,11 +101,13 @@ jobs:
           npm install
           npx hexo clean
           npx hexo generate
+          # 将 Hexo 编译生成的 public 文件夹内容复制到仓库根目录，以便 GitHub Pages 直接读取渲染
+          cp -rn public/* .
 
       - name: Commit and Push to Repository
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add source/_posts/
+          git add .
           git commit -m "Auto: generate biz news for $(date +'%Y-%m-%d')" || exit 0
           git push
