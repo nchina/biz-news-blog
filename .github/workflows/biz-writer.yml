@@ -2,16 +2,33 @@ name: Biz Auto Post Generator
 
 on:
   schedule:
-    # 避开整点高峰：UTC 时间 23:35（对应北京时间每天早晨 07:35）自动触发
     - cron: '35 23 * * *'
-  workflow_dispatch: # 保留手动触发按钮
+  workflow_dispatch:
+
+# 赋予部署 GitHub Pages 的权限
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
   write-and-deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -22,6 +39,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install requests
+          npm install
 
       - name: Generate Biz Post with DeepSeek
         env:
@@ -39,7 +57,6 @@ jobs:
           today_str = datetime.now().strftime("%Y-%m-%d")
           file_name = f"source/_posts/{today_str}-biz-news.md"
 
-          # 针对商业模式、宏观趋势与创业点子定制的专有 Prompt
           prompt = f"""
           你是一位敏锐的创投分析师与宏观经济观察员。请为今天的“前沿商业与经济趋势速递”撰写一篇简报。
 
@@ -76,7 +93,6 @@ jobs:
           response.raise_for_status()
           content = response.json()["choices"][0]["message"]["content"]
 
-          # 生成 Hexo 格式文章
           file_content = f"""---
           title: 前沿商业与经济趋势速递 ({today_str})
           date: {today_str} 08:00:00
@@ -96,18 +112,28 @@ jobs:
           print(f"Post created successfully: {file_name}")
           EOF
 
-      - name: Deploy Hexo Site
+      - name: Build Hexo Site
         run: |
-          npm install
           npx hexo clean
           npx hexo generate
-          # 将 Hexo 编译生成的 public 文件夹内容复制到仓库根目录，以便 GitHub Pages 直接读取渲染
-          cp -rn public/* .
+          echo "biz.n-china.com" > public/CNAME
 
-      - name: Commit and Push to Repository
+      - name: Save MD Post to Source
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add .
-          git commit -m "Auto: generate biz news for $(date +'%Y-%m-%d')" || exit 0
+          git add source/_posts/
+          git commit -m "Auto: generate biz news markdown for $(date +'%Y-%m-%d')" || exit 0
           git push
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './public'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
