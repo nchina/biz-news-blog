@@ -1,0 +1,111 @@
+name: Biz Auto Post Generator
+
+on:
+  schedule:
+    # 避开整点高峰：UTC 时间 23:35（对应北京时间每天早晨 07:35）自动触发
+    - cron: '35 23 * * *'
+  workflow_dispatch: # 保留手动触发按钮
+
+jobs:
+  write-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Generate Biz Post with DeepSeek
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          python - << 'EOF'
+          import os
+          import requests
+          from datetime import datetime
+
+          api_key = os.environ.get("DEEPSEEK_API_KEY")
+          if not api_key:
+              raise ValueError("Missing DEEPSEEK_API_KEY secret")
+
+          today_str = datetime.now().strftime("%Y-%m-%d")
+          file_name = f"source/_posts/{today_str}-biz-news.md"
+
+          # 针对商业模式、宏观趋势与创业点子定制的专有 Prompt
+          prompt = f"""
+          你是一位敏锐的创投分析师与宏观经济观察员。请为今天的“前沿商业与经济趋势速递”撰写一篇简报。
+
+          【关注与聚焦领域】
+          1. 新商业模式：海外爆火的新型 SaaS、出海赚钱模式、低成本个体创业案例（Solopreneur/Micro-SaaS）。
+          2. 宏观与政策红利：国家最新的产业扶持政策、货币/财政政策动向、消费与出口新趋势。
+          3. 前沿赚钱点子：基于新技术（如 AI 落地、自动化、硬件结合）产生的潜在商业机会与细分赛道洞察。
+
+          【筛选与过滤规则】
+          1. 严禁包含：未经证实的八卦炒作、无实质内容的宏观废话、传统低效套利项目。
+          2. 精选数量：从今日信息中精选出最具备商业落地或启发价值的 3~5 条，多一条都不写。
+
+          【排版格式要求】
+          - 开头用 1~2 句话直接引入今日商业核心趋势。
+          - 采用 Markdown 格式，每条动态使用加粗小标题（如 ## 1. 标题名称），并分为：【现象/政策】、【商业逻辑】、【潜在机会/启发】三部分呈现。
+          - 语言商业敏锐、切中要害、注重落地价值。
+          """
+
+          url = "https://api.deepseek.com/chat/completions"
+          headers = {
+              "Content-Type": "application/json",
+              "Authorization": f"Bearer {api_key}"
+          }
+          data = {
+              "model": "deepseek-chat",
+              "messages": [
+                  {"role": "system", "content": "你是一位敏锐的商业创投专家，擅长发现前沿商业模式与政策机会。"},
+                  {"role": "user", "content": prompt}
+              ],
+              "temperature": 0.7
+          }
+
+          response = requests.post(url, json=data, headers=headers)
+          response.raise_for_status()
+          content = response.json()["choices"][0]["message"]["content"]
+
+          # 生成 Hexo 格式文章
+          file_content = f"""---
+          title: 前沿商业与经济趋势速递 ({today_str})
+          date: {today_str} 08:00:00
+          tags:
+            - 商业模式
+            - 经济趋势
+            - 创业点子
+          ---
+
+          {content}
+          """
+
+          os.makedirs("source/_posts", exist_ok=True)
+          with open(file_name, "w", encoding="utf-8") as f:
+              f.write(file_content.strip())
+
+          print(f"Post created successfully: {file_name}")
+          EOF
+
+      - name: Deploy Hexo Site
+        run: |
+          npm install
+          npx hexo clean
+          npx hexo generate
+
+      - name: Commit and Push to Repository
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add source/_posts/
+          git commit -m "Auto: generate biz news for $(date +'%Y-%m-%d')" || exit 0
+          git push
